@@ -896,11 +896,11 @@ final class CounterStore: ObservableObject {
         case .requiresApproval:
             launchAtLogin = true
             needsLoginApproval = true
-            loginNote = "Allow F3 Counter in System Settings → General → Login Items."
+            loginNote = "Allow DinnerPlease in System Settings → General → Login Items."
         case .notFound:
             launchAtLogin = false
             needsLoginApproval = false
-            loginNote = "Keep F3 Counter in your Applications folder."
+            loginNote = "Keep DinnerPlease in your Applications folder."
         default:
             launchAtLogin = false
             needsLoginApproval = false
@@ -1028,7 +1028,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSPopoverDelegate, NSW
         } else {
             let host = NSHostingController(rootView: AppRoot(store: CounterStore.shared))
             let created = NSWindow(contentViewController: host)
-            created.title = "F3 Counter"
+            created.title = "DinnerPlease"
             created.styleMask = [.titled, .closable, .miniaturizable, .resizable]
             created.titlebarAppearsTransparent = true
             created.isMovableByWindowBackground = true
@@ -1931,10 +1931,27 @@ struct HistoryView: View {
     @ObservedObject var store: CounterStore
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.accentTheme) private var accentTheme
-    @State private var range: AnalyticsRange = .month
-    @State private var unit: AverageUnit = .day
-    @State private var customStart = Calendar.current.date(byAdding: .month, value: -1, to: Date()) ?? Date()
-    @State private var customEnd = Date()
+    @State private var range: AnalyticsRange
+    @State private var unit: AverageUnit
+    @State private var customStart: Date
+    @State private var customEnd: Date
+
+    private static let rangeKey = "analyticsRange"
+    private static let unitKey = "averageUnit"
+    private static let customStartKey = "analyticsCustomStart"
+    private static let customEndKey = "analyticsCustomEnd"
+
+    init(store: CounterStore) {
+        self.store = store
+        let defaults = UserDefaults.standard
+        let storedRange = defaults.string(forKey: Self.rangeKey).flatMap(AnalyticsRange.init(rawValue:)) ?? .week
+        let storedUnit = defaults.string(forKey: Self.unitKey).flatMap(AverageUnit.init(rawValue:)) ?? .day
+        _range = State(initialValue: storedRange)
+        _unit = State(initialValue: storedUnit)
+        let fallbackStart = Calendar.current.date(byAdding: .month, value: -1, to: Date()) ?? Date()
+        _customStart = State(initialValue: defaults.object(forKey: Self.customStartKey) as? Date ?? fallbackStart)
+        _customEnd = State(initialValue: defaults.object(forKey: Self.customEndKey) as? Date ?? Date())
+    }
 
     private var accent: Color { accentTheme.palette(for: colorScheme).accent }
 
@@ -2055,6 +2072,7 @@ struct HistoryView: View {
                     ensureCustomRangeFitsUnit(now: now)
                 }
                 reconcileUnit(now: now)
+                rememberFilters()
             }
 
             if range == .custom {
@@ -2064,9 +2082,11 @@ struct HistoryView: View {
                 }
                 .onChange(of: customStart) { _, _ in
                     clampCustomDates(now: Date())
+                    rememberFilters()
                 }
                 .onChange(of: customEnd) { _, _ in
                     clampCustomDates(now: Date())
+                    rememberFilters()
                 }
             }
         }
@@ -2122,10 +2142,13 @@ struct HistoryView: View {
                 guard range != .custom else {
                     if !resolvedDuration(now: now).isLonger(than: new, endingAt: now) {
                         unit = old
+                        return
                     }
+                    rememberFilters()
                     return
                 }
                 reconcileDuration(now: now)
+                rememberFilters()
             }
         }
     }
@@ -2135,6 +2158,14 @@ struct HistoryView: View {
             .font(.caption2.weight(.semibold))
             .tracking(1.1)
             .foregroundStyle(.tertiary)
+    }
+
+    private func rememberFilters() {
+        let defaults = UserDefaults.standard
+        defaults.set(range.rawValue, forKey: Self.rangeKey)
+        defaults.set(unit.rawValue, forKey: Self.unitKey)
+        defaults.set(customStart, forKey: Self.customStartKey)
+        defaults.set(customEnd, forKey: Self.customEndKey)
     }
 
     private func ensureCustomRangeFitsUnit(now: Date) {
@@ -2397,7 +2428,7 @@ struct SettingsView: View {
                     .strokeBorder(Color.primary.opacity(0.08), lineWidth: 1)
             }
 
-            Text("Function keys work alone. Other keys need ⌘, ⌥, or ⌃. Esc cancels.")
+            Text("Click a shortcut to change it. Function keys work alone. Other keys need ⌘, ⌥, or ⌃. Esc cancels.")
                 .font(.caption2)
                 .foregroundStyle(.tertiary)
 
@@ -2411,30 +2442,52 @@ struct SettingsView: View {
 
     private func shortcutRow(_ title: String, role: ShortcutRole, combo: HotKeyCombo) -> some View {
         let recording = recordingShortcut == role
-        return HStack {
-            Text(title)
-                .font(.callout)
-            Spacer()
-            Button(recording ? "Press a key" : combo.label) {
-                if recording {
-                    stopShortcutRecording(resume: true)
-                } else {
-                    beginRecording(role)
+        return Button {
+            if recording {
+                stopShortcutRecording(resume: true)
+            } else {
+                beginRecording(role)
+            }
+        } label: {
+            HStack(spacing: 12) {
+                Text(title)
+                    .font(.callout)
+                    .foregroundStyle(.primary)
+                Spacer(minLength: 8)
+                HStack(spacing: 5) {
+                    Text(recording ? "Press a key" : combo.label)
+                    if !recording {
+                        Image(systemName: "pencil")
+                            .font(.system(size: 9, weight: .bold))
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .font(.callout.weight(.medium))
+                .foregroundStyle(recording ? accent : .primary)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 4)
+                .background(
+                    Capsule(style: .continuous)
+                        .fill(recording ? accent.opacity(0.16) : Color.primary.opacity(0.08))
+                )
+                .overlay {
+                    Capsule(style: .continuous)
+                        .strokeBorder(
+                            recording ? accent.opacity(0.45) : Color.primary.opacity(0.16),
+                            lineWidth: 1
+                        )
                 }
             }
-            .buttonStyle(.plain)
-            .pointingCursor()
-            .font(.callout.weight(.medium))
-            .foregroundStyle(recording ? accent : .primary)
-            .padding(.horizontal, 10)
-            .padding(.vertical, 4)
-            .background(
-                Capsule(style: .continuous)
-                    .fill(recording ? accent.opacity(0.16) : Color.primary.opacity(0.06))
-            )
+            .padding(.horizontal, 16)
+            .padding(.vertical, 10)
+            .contentShape(Rectangle())
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 10)
+        .buttonStyle(.plain)
+        .pointingCursor()
+        .help(recording ? "Esc cancels" : "Change shortcut")
+        .accessibilityLabel("\(title) shortcut")
+        .accessibilityValue(recording ? "Press a key" : combo.label)
+        .accessibilityHint(recording ? "Press Escape to cancel" : "Click to change this shortcut")
     }
 
     private func beginRecording(_ role: ShortcutRole) {
