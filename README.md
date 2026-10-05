@@ -1,4 +1,4 @@
-# DinnerPlease - Distractions counter | FlowState Practice
+# DinnerPlease - Distractions Counter | FlowState Practice
 
 DinnerPlease helps you practice flow state. Hit a key when you get distracted. It counts those distractions and the hours you work. Analytics shows both over time, so you can see yourself getting better.
 
